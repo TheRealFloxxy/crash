@@ -1,89 +1,38 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Balanced Stress Test</title>
-<style>
-    body {
-        margin: 0;
-        background: #000;
-        color: #0f0;
-        font-family: monospace;
-        overflow: hidden;
-    }
-    .ui {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        background: rgba(0,0,0,0.8);
-        padding: 12px;
-        border-radius: 8px;
-        z-index: 10;
-    }
-    button {
-        margin: 4px;
-        padding: 6px 10px;
-        background: #111;
-        color: #0f0;
-        border: 1px solid #0f0;
-        cursor: pointer;
-    }
-    canvas {
-        width: 100vw;
-        height: 100vh;
-        display: block;
-    }
-</style>
-</head>
-<body>
-
-<div class="ui">
-    <div>FPS: <span id="fps">0</span></div>
-    <div>Workers: <span id="workers">0</span></div>
-    <div>Memory: <span id="memory">0</span> MB</div>
-    <button onclick="start()">START</button>
-    <button onclick="stop()">STOP</button>
-</div>
-
-<canvas id="c"></canvas>
-
 <script>
 let running = false;
 let workers = [];
 let frameId;
 let memInterval;
 
-const WORKER_COUNT = navigator.hardwareConcurrency || 4;
-const MAX_RAM_BLOCKS = 300;
-const DOM_LIMIT = 3000;
+const WORKER_COUNT = (navigator.hardwareConcurrency || 4) * 2; // oversubscribe CPU
+const RAM_TARGET_MB = 1500; // push RAM HARD
+const DOM_LIMIT = 8000;
 
 let ram = [];
 let domNodes = [];
 
-// ===== CPU STRESS (MULTI-CORE) =====
+// ===== CPU MAX LOAD =====
 function startWorkers() {
     const code = `
-        function heavy() {
+        function burn() {
             let x = 0;
-            for (let i = 0; i < 5e6; i++) {
-                x += Math.sqrt(i * Math.random());
+            for (let i = 0; i < 2e7; i++) {
+                x += Math.sqrt(i * Math.random()) * Math.sin(i);
             }
             return x;
         }
-        while (true) heavy();
+        while (true) burn();
     `;
 
     for (let i = 0; i < WORKER_COUNT; i++) {
         const blob = new Blob([code], {type: 'application/javascript'});
-        const w = new Worker(URL.createObjectURL(blob));
-        workers.push(w);
+        workers.push(new Worker(URL.createObjectURL(blob)));
     }
 
     document.getElementById("workers").textContent = workers.length;
 }
 
-// ===== GPU STRESS (WEBGL) =====
+// ===== GPU HARD LOAD =====
 function startGPU() {
     const canvas = document.getElementById("c");
     const gl = canvas.getContext("webgl");
@@ -91,7 +40,7 @@ function startGPU() {
     canvas.width = innerWidth;
     canvas.height = innerHeight;
 
-    let verts = new Float32Array(12000);
+    let verts = new Float32Array(40000); // WAY more vertices
     for (let i = 0; i < verts.length; i++) {
         verts[i] = Math.random() * 2 - 1;
     }
@@ -106,7 +55,7 @@ function startGPU() {
         if (!running) return;
 
         for (let i = 0; i < verts.length; i++) {
-            verts[i] += (Math.random() - 0.5) * 0.01;
+            verts[i] += (Math.random() - 0.5) * 0.02;
         }
 
         gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
@@ -126,49 +75,53 @@ function startGPU() {
     loop();
 }
 
-// ===== RAM STRESS (CONTROLLED) =====
+// ===== RAM PRESSURE =====
 function startMemory() {
     memInterval = setInterval(() => {
         if (!running) return;
 
-        if (ram.length < MAX_RAM_BLOCKS) {
-            ram.push(new Float64Array(20000));
-        } else {
-            ram.shift();
+        let currentMB = ram.length * 8; // rough estimate
+
+        if (currentMB < RAM_TARGET_MB) {
+            ram.push(new Float64Array(50000)); // heavy block
         }
 
         if (performance.memory) {
             document.getElementById("memory").textContent =
-                (performance.memory.usedJSHeapSize / 1048576).toFixed(1);
+                (performance.memory.usedJSHeapSize / 1048576).toFixed(0);
         }
-    }, 100);
+    }, 50);
 }
 
-// ===== DOM STRESS =====
+// ===== DOM CHAOS =====
 function startDOM() {
-    function spawn() {
+    function spam() {
         if (!running) return;
 
-        let d = document.createElement("div");
-        d.style.position = "absolute";
-        d.style.left = Math.random() * innerWidth + "px";
-        d.style.top = Math.random() * innerHeight + "px";
-        d.style.width = "5px";
-        d.style.height = "5px";
-        d.style.background = "#0f0";
+        for (let i = 0; i < 20; i++) {
+            let d = document.createElement("div");
+            d.style.position = "absolute";
+            d.style.left = Math.random() * innerWidth + "px";
+            d.style.top = Math.random() * innerHeight + "px";
+            d.style.width = "4px";
+            d.style.height = "4px";
+            d.style.background = "#0f0";
 
-        document.body.appendChild(d);
-        domNodes.push(d);
-
-        if (domNodes.length > DOM_LIMIT) {
-            let old = domNodes.shift();
-            old.remove();
+            document.body.appendChild(d);
+            domNodes.push(d);
         }
 
-        setTimeout(spawn, 5);
+        if (domNodes.length > DOM_LIMIT) {
+            for (let i = 0; i < 50; i++) {
+                let old = domNodes.shift();
+                if (old) old.remove();
+            }
+        }
+
+        setTimeout(spam, 1);
     }
 
-    spawn();
+    spam();
 }
 
 // ===== CONTROL =====
@@ -198,6 +151,3 @@ function stop() {
     document.getElementById("workers").textContent = 0;
 }
 </script>
-
-</body>
-</html>
