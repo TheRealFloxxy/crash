@@ -1,22 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChromeOS Stress Test v2.0</title>
+
+<style>
+body {
+    margin: 0;
+    background: black;
+    color: #0f0;
+    font-family: monospace;
+    overflow: hidden;
+}
+.ui {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.85);
+    padding: 12px;
+    border-radius: 8px;
+    z-index: 10;
+}
+button {
+    margin: 4px;
+    padding: 6px;
+    background: black;
+    color: #0f0;
+    border: 1px solid #0f0;
+    cursor: pointer;
+}
+canvas {
+    width: 100vw;
+    height: 100vh;
+}
+</style>
+</head>
+
+<body>
+
+<div class="ui">
+    <div>Version: <span id="ver">2.0</span></div>
+    <div>FPS: <span id="fps">0</span></div>
+    <div>Workers: <span id="workers">0</span></div>
+    <div>Memory: <span id="memory">0</span> MB</div>
+
+    <button onclick="start()">START</button>
+    <button onclick="stop()">STOP</button>
+    <button onclick="goFullscreen()">Fullscreen</button>
+</div>
+
+<canvas id="c"></canvas>
+
 <script>
+let VERSION = "2.0-ChromeOS";
+
 let running = false;
 let workers = [];
 let frameId;
 let memInterval;
 
-const WORKER_COUNT = (navigator.hardwareConcurrency || 4) * 2; // oversubscribe CPU
-const RAM_TARGET_MB = 1500; // push RAM HARD
-const DOM_LIMIT = 8000;
+const CPU_CORES = navigator.hardwareConcurrency || 4;
+const WORKERS = CPU_CORES + 2; // slight oversubscription
+const RAM_TARGET_MB = 1200;
+const DOM_LIMIT = 6000;
 
 let ram = [];
 let domNodes = [];
 
-// ===== CPU MAX LOAD =====
+// ===== FULLSCREEN (USER-TRIGGERED ONLY) =====
+function goFullscreen() {
+    document.documentElement.requestFullscreen().catch(() => {});
+}
+
+// ===== CPU LOAD =====
 function startWorkers() {
     const code = `
         function burn() {
             let x = 0;
-            for (let i = 0; i < 2e7; i++) {
+            for (let i = 0; i < 1.5e7; i++) {
                 x += Math.sqrt(i * Math.random()) * Math.sin(i);
             }
             return x;
@@ -24,7 +86,7 @@ function startWorkers() {
         while (true) burn();
     `;
 
-    for (let i = 0; i < WORKER_COUNT; i++) {
+    for (let i = 0; i < WORKERS; i++) {
         const blob = new Blob([code], {type: 'application/javascript'});
         workers.push(new Worker(URL.createObjectURL(blob)));
     }
@@ -32,7 +94,7 @@ function startWorkers() {
     document.getElementById("workers").textContent = workers.length;
 }
 
-// ===== GPU HARD LOAD =====
+// ===== GPU LOAD (WebGL optimized for ChromeOS) =====
 function startGPU() {
     const canvas = document.getElementById("c");
     const gl = canvas.getContext("webgl");
@@ -40,7 +102,7 @@ function startGPU() {
     canvas.width = innerWidth;
     canvas.height = innerHeight;
 
-    let verts = new Float32Array(40000); // WAY more vertices
+    let verts = new Float32Array(30000);
     for (let i = 0; i < verts.length; i++) {
         verts[i] = Math.random() * 2 - 1;
     }
@@ -55,7 +117,7 @@ function startGPU() {
         if (!running) return;
 
         for (let i = 0; i < verts.length; i++) {
-            verts[i] += (Math.random() - 0.5) * 0.02;
+            verts[i] += (Math.random() - 0.5) * 0.015;
         }
 
         gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
@@ -75,36 +137,38 @@ function startGPU() {
     loop();
 }
 
-// ===== RAM PRESSURE =====
+// ===== RAM LOAD (ChromeOS SAFE LIMIT PUSH) =====
 function startMemory() {
     memInterval = setInterval(() => {
         if (!running) return;
 
-        let currentMB = ram.length * 8; // rough estimate
+        let currentMB = ram.length * 6;
 
         if (currentMB < RAM_TARGET_MB) {
-            ram.push(new Float64Array(50000)); // heavy block
+            ram.push(new Float64Array(40000));
+        } else {
+            ram.shift(); // avoid instant crash
         }
 
         if (performance.memory) {
             document.getElementById("memory").textContent =
                 (performance.memory.usedJSHeapSize / 1048576).toFixed(0);
         }
-    }, 50);
+    }, 60);
 }
 
-// ===== DOM CHAOS =====
+// ===== DOM LOAD =====
 function startDOM() {
     function spam() {
         if (!running) return;
 
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 10; i++) {
             let d = document.createElement("div");
             d.style.position = "absolute";
             d.style.left = Math.random() * innerWidth + "px";
             d.style.top = Math.random() * innerHeight + "px";
-            d.style.width = "4px";
-            d.style.height = "4px";
+            d.style.width = "3px";
+            d.style.height = "3px";
             d.style.background = "#0f0";
 
             document.body.appendChild(d);
@@ -112,13 +176,13 @@ function startDOM() {
         }
 
         if (domNodes.length > DOM_LIMIT) {
-            for (let i = 0; i < 50; i++) {
+            for (let i = 0; i < 30; i++) {
                 let old = domNodes.shift();
                 if (old) old.remove();
             }
         }
 
-        setTimeout(spam, 1);
+        setTimeout(spam, 2);
     }
 
     spam();
@@ -150,4 +214,15 @@ function stop() {
 
     document.getElementById("workers").textContent = 0;
 }
+
+// OPTIONAL: auto fullscreen on first click anywhere
+document.body.addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+        goFullscreen();
+    }
+}, { once: true });
+
 </script>
+
+</body>
+</html>
