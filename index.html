@@ -1,192 +1,203 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chrome OS Stress Test</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background: #000;
-            color: #fff;
-            font-family: monospace;
-            overflow: hidden;
-        }
-        .container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-        }
-        .canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        .info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
-            background: rgba(0,0,0,0.8);
-            padding: 10px;
-            border-radius: 5px;
-        }
-        button {
-            background: #ff0000;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            margin: 5px;
-            cursor: pointer;
-            border-radius: 5px;
-            font-size: 16px;
-        }
-        button:hover {
-            background: #cc0000;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Balanced Stress Test</title>
+<style>
+    body {
+        margin: 0;
+        background: #000;
+        color: #0f0;
+        font-family: monospace;
+        overflow: hidden;
+    }
+    .ui {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.8);
+        padding: 12px;
+        border-radius: 8px;
+        z-index: 10;
+    }
+    button {
+        margin: 4px;
+        padding: 6px 10px;
+        background: #111;
+        color: #0f0;
+        border: 1px solid #0f0;
+        cursor: pointer;
+    }
+    canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+    }
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="info">
-            <h2>Chrome OS Stress Test</h2>
-            <p>Memory: <span id="memory">0</span> MB</p>
-            <p>FPS: <span id="fps">0</span></p>
-            <p>Workers: <span id="workers">0</span></p>
-            <button onclick="startMemoryLeak()">Memory Leak</button>
-            <button onclick="startCanvasStress()">Canvas Stress</button>
-            <button onclick="startWorkerFork()">Worker Fork Bomb</button>
-            <button onclick="startDOMStress()">DOM Stress</button>
-            <button onclick="startAll()">Start All</button>
-        </div>
-        <canvas class="canvas" id="stressCanvas"></canvas>
-    </div>
 
-    <script>
-        let memoryInterval;
-        let canvasAnimation;
-        let workers = [];
-        let domElements = [];
-        
-        // Memory leak simulation
-        function startMemoryLeak() {
-            let leakArray = [];
-            memoryInterval = setInterval(() => {
-                for(let i = 0; i < 10000; i++) {
-                    leakArray.push(new Array(1000).fill(Math.random()));
-                }
-                document.getElementById('memory').textContent = 
-                    (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 'N/A');
-            }, 100);
-        }
-        
-        // Canvas stress test
-        function startCanvasStress() {
-            const canvas = document.getElementById('stressCanvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            
-            let particles = [];
-            for(let i = 0; i < 10000; i++) {
-                particles.push({
-                    x: Math.random() * canvas.width,
-                    y: Math.random() * canvas.height,
-                    vx: (Math.random() - 0.5) * 10,
-                    vy: (Math.random() - 0.5) * 10,
-                    size: Math.random() * 5 + 1,
-                    color: `hsl(${Math.random() * 360}, 100%, 50%)`
-                });
+<div class="ui">
+    <div>FPS: <span id="fps">0</span></div>
+    <div>Workers: <span id="workers">0</span></div>
+    <div>Memory: <span id="memory">0</span> MB</div>
+    <button onclick="start()">START</button>
+    <button onclick="stop()">STOP</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+let running = false;
+let workers = [];
+let frameId;
+let memInterval;
+
+const WORKER_COUNT = navigator.hardwareConcurrency || 4;
+const MAX_RAM_BLOCKS = 300;
+const DOM_LIMIT = 3000;
+
+let ram = [];
+let domNodes = [];
+
+// ===== CPU STRESS (MULTI-CORE) =====
+function startWorkers() {
+    const code = `
+        function heavy() {
+            let x = 0;
+            for (let i = 0; i < 5e6; i++) {
+                x += Math.sqrt(i * Math.random());
             }
-            
-            let lastTime = performance.now();
-            let frameCount = 0;
-            
-            function animate() {
-                ctx.fillStyle = 'rgba(0,0,0,0.1)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                
-                particles.forEach(p => {
-                    p.x += p.vx;
-                    p.y += p.vy;
-                    if(p.x < 0 || p.x > canvas.width) p.vx *= -1;
-                    if(p.y < 0 || p.y > canvas.height) p.vy *= -1;
-                    
-                    ctx.fillStyle = p.color;
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                    ctx.fill();
-                });
-                
-                frameCount++;
-                const currentTime = performance.now();
-                if(currentTime - lastTime >= 1000) {
-                    document.getElementById('fps').textContent = frameCount;
-                    frameCount = 0;
-                    lastTime = currentTime;
-                }
-                
-                canvasAnimation = requestAnimationFrame(animate);
-            }
-            animate();
+            return x;
         }
-        
-        // Worker fork bomb
-        function startWorkerFork() {
-            const workerCode = `
-                while(true) {
-                    const worker = new Worker(URL.createObjectURL(new Blob([\`(${arguments.callee.toString()})()\`], {type: 'application/javascript'})));
-                }
-            `;
-            
-            for(let i = 0; i < 10; i++) {
-                const blob = new Blob([workerCode], {type: 'application/javascript'});
-                const worker = new Worker(URL.createObjectURL(blob));
-                workers.push(worker);
-            }
-            
-            document.getElementById('workers').textContent = workers.length;
+        while (true) heavy();
+    `;
+
+    for (let i = 0; i < WORKER_COUNT; i++) {
+        const blob = new Blob([code], {type: 'application/javascript'});
+        const w = new Worker(URL.createObjectURL(blob));
+        workers.push(w);
+    }
+
+    document.getElementById("workers").textContent = workers.length;
+}
+
+// ===== GPU STRESS (WEBGL) =====
+function startGPU() {
+    const canvas = document.getElementById("c");
+    const gl = canvas.getContext("webgl");
+
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+
+    let verts = new Float32Array(12000);
+    for (let i = 0; i < verts.length; i++) {
+        verts[i] = Math.random() * 2 - 1;
+    }
+
+    let buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+    let last = performance.now();
+    let frames = 0;
+
+    function loop() {
+        if (!running) return;
+
+        for (let i = 0; i < verts.length; i++) {
+            verts[i] += (Math.random() - 0.5) * 0.01;
         }
-        
-        // DOM stress test
-        function startDOMStress() {
-            const container = document.querySelector('.container');
-            
-            function createElement() {
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.left = Math.random() * window.innerWidth + 'px';
-                div.style.top = Math.random() * window.innerHeight + 'px';
-                div.style.width = '10px';
-                div.style.height = '10px';
-                div.style.background = `hsl(${Math.random() * 360}, 100%, 50%)`;
-                container.appendChild(div);
-                domElements.push(div);
-                
-                if(domElements.length > 10000) {
-                    const old = domElements.shift();
-                    old.remove();
-                }
-            }
-            
-            for(let i = 0; i < 1000; i++) {
-                setTimeout(createElement, i * 10);
-            }
+
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        frames++;
+        let now = performance.now();
+        if (now - last > 1000) {
+            document.getElementById("fps").textContent = frames;
+            frames = 0;
+            last = now;
         }
-        
-        // Start all stress tests
-        function startAll() {
-            startMemoryLeak();
-            startCanvasStress();
-            startWorkerFork();
-            startDOMStress();
+
+        frameId = requestAnimationFrame(loop);
+    }
+
+    loop();
+}
+
+// ===== RAM STRESS (CONTROLLED) =====
+function startMemory() {
+    memInterval = setInterval(() => {
+        if (!running) return;
+
+        if (ram.length < MAX_RAM_BLOCKS) {
+            ram.push(new Float64Array(20000));
+        } else {
+            ram.shift();
         }
-        
-        // Auto-start after 2 seconds
-        setTimeout(startAll, 2000);
-    </script>
+
+        if (performance.memory) {
+            document.getElementById("memory").textContent =
+                (performance.memory.usedJSHeapSize / 1048576).toFixed(1);
+        }
+    }, 100);
+}
+
+// ===== DOM STRESS =====
+function startDOM() {
+    function spawn() {
+        if (!running) return;
+
+        let d = document.createElement("div");
+        d.style.position = "absolute";
+        d.style.left = Math.random() * innerWidth + "px";
+        d.style.top = Math.random() * innerHeight + "px";
+        d.style.width = "5px";
+        d.style.height = "5px";
+        d.style.background = "#0f0";
+
+        document.body.appendChild(d);
+        domNodes.push(d);
+
+        if (domNodes.length > DOM_LIMIT) {
+            let old = domNodes.shift();
+            old.remove();
+        }
+
+        setTimeout(spawn, 5);
+    }
+
+    spawn();
+}
+
+// ===== CONTROL =====
+function start() {
+    if (running) return;
+    running = true;
+
+    startWorkers();
+    startGPU();
+    startMemory();
+    startDOM();
+}
+
+function stop() {
+    running = false;
+
+    workers.forEach(w => w.terminate());
+    workers = [];
+
+    cancelAnimationFrame(frameId);
+    clearInterval(memInterval);
+
+    domNodes.forEach(d => d.remove());
+    domNodes = [];
+    ram = [];
+
+    document.getElementById("workers").textContent = 0;
+}
+</script>
+
 </body>
 </html>
